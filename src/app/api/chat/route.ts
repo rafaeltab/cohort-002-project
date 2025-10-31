@@ -9,6 +9,7 @@ import {
   convertToModelMessages,
   createUIMessageStream,
   createUIMessageStreamResponse,
+  InferUITools,
   safeValidateUIMessages,
   stepCountIs,
   streamText,
@@ -24,8 +25,13 @@ export type MyMessage = UIMessage<
   never,
   {
     "frontend-action": "refresh-sidebar";
-  }
+  },
+  InferUITools<ReturnType<typeof getTools>>
 >;
+
+const getTools = (messages: UIMessage[]) => ({
+  search: searchTool(messages),
+});
 
 export async function POST(req: Request) {
   const body: {
@@ -106,9 +112,7 @@ export async function POST(req: Request) {
         - NEVER use your training data, always search using the tool you have been provided with.
         - ALWAYS State the subject of the most important sources at the end of your response
         </rules>`,
-        tools: {
-          search: searchTool(messages),
-        },
+        tools: getTools(messages),
         stopWhen: [stepCountIs(10)],
       });
 
