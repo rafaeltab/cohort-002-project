@@ -17,6 +17,7 @@ import {
 } from "ai";
 import { generateTitleForChat } from "./generate-title";
 import { searchTool } from "./search-tool";
+import { filterEmailsTool } from "./filter-tool";
 
 // Allow streaming responses up to 30 seconds
 export const maxDuration = 30;
@@ -31,6 +32,7 @@ export type MyMessage = UIMessage<
 
 const getTools = (messages: UIMessage[]) => ({
   search: searchTool(messages),
+  filterEmails: filterEmailsTool,
 });
 
 export async function POST(req: Request) {
@@ -98,20 +100,34 @@ export async function POST(req: Request) {
       }
 
       const result = streamText({
-        model: google("gemini-2.5-flash-lite"),
+        model: google("gemini-2.5-flash"),
         messages: convertToModelMessages(messages),
         system: `<goal>
-        Use the search tool to answer the user's question in a concise, but complete manner.
-        </goal>
-        <rules>
-        - ALWAYS use the tool
-        - ALWAYS answer the user's question using text, the user can not see the emails you find
-        - NEVER forget to answer the user's question directly with text
-        - Use the tool multiple times! 
-        - ALWAYS Use the search tool, wait for the response, then use it again to gather more information.
-        - NEVER use your training data, always search using the tool you have been provided with.
-        - ALWAYS State the subject of the most important sources at the end of your response
-        </rules>`,
+    Use the search tool to answer the user's question in a concise, but complete manner.
+</goal>
+<tools>
+USE 'filterEmails' when the user wants to:
+- Find emails from/to specific people (e.g., "emails from John", "emails to sarah@example.com")
+- Filter by date ranges (e.g., "emails before January 2024", "emails after last week")
+- Find emails containing exact text (e.g., "emails containing 'invoice'")
+- Any combination of precise filtering criteria
+
+USE 'search' when the user wants to:
+- Find information semantically (e.g., "emails about the project deadline")
+- Search by concepts or topics (e.g., "discussions about budget")
+- Find answers to questions (e.g., "what did John say about the meeting?")
+- Any query requiring understanding of meaning/context
+- Find people by name or description (e.g., "Mike's biggest client")
+</tools>
+<rules>
+- ALWAYS use a tool
+- ALWAYS answer the user's question using text, the user can not see the emails you find
+- NEVER forget to answer the user's question directly with text
+- Use tools multiple times! 
+- ALWAYS Use a tool, wait for the response, then use it again to gather more information.
+- NEVER use your training data, always search using a tool you have been provided with.
+- ALWAYS State the subject of the most important sources at the end of your response
+</rules>`,
         tools: getTools(messages),
         stopWhen: [stepCountIs(10)],
       });
