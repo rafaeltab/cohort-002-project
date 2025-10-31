@@ -18,6 +18,7 @@ import {
 import { generateTitleForChat } from "./generate-title";
 import { searchTool } from "./search-tool";
 import { filterEmailsTool } from "./filter-tool";
+import { getEmailsTool } from "./get-emails-tool";
 
 // Allow streaming responses up to 30 seconds
 export const maxDuration = 30;
@@ -33,6 +34,7 @@ export type MyMessage = UIMessage<
 const getTools = (messages: UIMessage[]) => ({
   search: searchTool(messages),
   filterEmails: filterEmailsTool,
+  getEmails: getEmailsTool,
 });
 
 export async function POST(req: Request) {
@@ -120,14 +122,43 @@ USE 'search' when the user wants to:
 - Find people by name or description (e.g., "Mike's biggest client")
 </tools>
 <rules>
-- ALWAYS use a tool
-- ALWAYS answer the user's question using text, the user can not see the emails you find
-- NEVER forget to answer the user's question directly with text
-- Use tools multiple times! 
-- ALWAYS Use a tool, wait for the response, then use it again to gather more information.
-- NEVER use your training data, always search using a tool you have been provided with.
-- ALWAYS State the subject of the most important sources at the end of your response
-</rules>`,
+- You have THREE tools available: 'search', 'filterEmails', and 'getEmails'
+- Follow this multi-step workflow for token efficiency:
+
+  STEP 1 - Browse metadata:
+  USE 'filterEmails' when the user wants to:
+  - Find emails from/to specific people (e.g., "emails from John", "emails to sarah@example.com")
+  - Filter by date ranges (e.g., "emails before January 2024", "emails after last week")
+  - Find emails containing exact text (e.g., "emails containing 'invoice'")
+  - Any combination of precise filtering criteria
+
+  USE 'search' when the user wants to:
+  - Find information semantically (e.g., "emails about the project deadline")
+  - Search by concepts or topics (e.g., "discussions about budget")
+  - Find answers to questions (e.g., "what did John say about the meeting?")
+  - Any query requiring understanding of meaning/context
+  - Find people by name or description (e.g., "Mike's biggest client")
+
+  NOTE: 'search' and 'filterEmails' return metadata with snippets only (id, threadId, subject, from, to, timestamp, snippet)
+
+  STEP 2 - Review and select:
+  - Review the subjects, metadata, and snippets from search/filter results
+  - Identify which specific emails need full content to answer the user's question
+  - If snippets contain enough info, answer directly without fetching full content
+
+  STEP 3 - Fetch full content:
+  USE 'getEmails' to retrieve full email bodies:
+  - Pass array of email IDs you need to read completely
+
+- NEVER answer from your training data - always use tools first
+- If the first query doesn't find enough information, try different approaches or tools
+- Only after using tools should you formulate your answer based on the results
+</rules>
+
+<the-ask>
+Here is the user's question. Follow the multi-step workflow above to efficiently find and retrieve the information.
+</the-ask>
+        `,
         tools: getTools(messages),
         stopWhen: [stepCountIs(10)],
       });

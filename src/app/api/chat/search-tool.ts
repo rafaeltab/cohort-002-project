@@ -13,7 +13,7 @@ import { z } from "zod";
 export function searchTool(messages: UIMessage[]) {
   return tool({
     description:
-      "Search emails using at least 5 keywords and a semantic search query. Returns most relevant emails ranked by reciprocal rank fusion. Use synonyms in the keywords, as this does exact matching only!",
+      "Search emails using both keyword and semantic search. Returns metadata with snippets only - use getEmails tool to fetch full content of specific emails.",
     inputSchema: z.object({
       keywords: z
         .array(z.string())
@@ -60,20 +60,27 @@ Keywords: ${q.bm25}`,
         limit: 10,
       });
 
-      console.log("discovered email chunk count: ", values.length);
+      // Return metadata with snippets only
+      const topEmails = values.map((r) => {
+        // Get full email to extract threadId
+        const fullEmail = emails.find((e) => e.id === r.email.id);
+        const snippet =
+          r.email.chunk.slice(0, 150).trim() +
+          (r.email.chunk.length > 150 ? "..." : "");
 
-      return {
-        emails: values.map((r) => ({
+        return {
           id: r.email.id,
+          threadId: fullEmail?.threadId ?? "",
+          subject: r.email.subject,
           from: r.email.from,
           to: r.email.to,
-          subject: r.email.subject,
-          body: r.email.chunk,
           timestamp: r.email.timestamp,
-          scores: r.scores,
           score: r.score,
-        })),
-      };
+          snippet,
+        };
+      });
+
+      console.log("Top emails:", topEmails.length);
     },
   });
 }
