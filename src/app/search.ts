@@ -3,6 +3,11 @@ import fs from "fs/promises";
 import path from "path";
 import { embedMany, embed, cosineSimilarity } from "ai";
 import { google } from "@ai-sdk/google";
+import {
+  ensureEmbeddingsCacheDirectory,
+  getCachedEmbedding,
+  writeEmbeddingToCache,
+} from "./embeddings";
 
 export interface Email {
   id: string;
@@ -303,9 +308,7 @@ export class Bm25SearchFunction implements SearchFunction<string[], Bm25Score> {
       return emails.map((x) => ({ email: x, scores: { bm25: 0 } }));
     }
 
-    const corpus = emails.map((email) =>
-      `${email.subject} ${email.body}`.toLowerCase()
-    );
+    const corpus = emails.map((email) => emailToText(email).toLowerCase());
 
     const scores: number[] = (BM25 as any)(corpus, query);
 
@@ -355,29 +358,24 @@ export async function loadEmails(): Promise<Email[]> {
   return JSON.parse(fileContent);
 }
 
-const CACHE_DIR = path.join(process.cwd(), "data", "embeddings");
-
-const CACHE_KEY = "google-text-embedding-004";
-
-const getEmbeddingFilePath = (id: string) =>
-  path.join(CACHE_DIR, `${CACHE_KEY}-${id}.json`);
+// Converts the email to a text string for indexing
+export const emailToText = (email: Email) => `${email.subject} ${email.body}`;
 
 export async function loadOrGenerateEmbeddings(
   emails: Email[]
 ): Promise<{ id: string; embedding: number[] }[]> {
   // Ensure cache directory exists
-  await fs.mkdir(CACHE_DIR, { recursive: true });
+  await ensureEmbeddingsCacheDirectory();
 
   const results: { id: string; embedding: number[] }[] = [];
   const uncachedEmails: Email[] = [];
 
   // Check cache for each email
   for (const email of emails) {
-    try {
-      const cached = await fs.readFile(getEmbeddingFilePath(email.id), "utf-8");
-      const data = JSON.parse(cached);
-      results.push({ id: email.id, embedding: data.embedding });
-    } catch {
+    const cachedEmbedding = await getCachedEmbedding(emailToText(email));
+    if (cachedEmbedding) {
+      results.push({ id: email.id, embedding: cachedEmbedding });
+    } else {
       // Cache miss - need to generate
       uncachedEmails.push(email);
     }
@@ -398,7 +396,7 @@ export async function loadOrGenerateEmbeddings(
 
       const { embeddings } = await embedMany({
         model: google.textEmbeddingModel("text-embedding-004"),
-        values: batch.map((e) => `${e.subject} ${e.body}`),
+        values: batch.map((e) => emailToText(e)),
       });
 
       // Write batch to cache
@@ -406,10 +404,7 @@ export async function loadOrGenerateEmbeddings(
         const email = batch[j];
         const embedding = embeddings[j];
 
-        await fs.writeFile(
-          getEmbeddingFilePath(email.id),
-          JSON.stringify({ id: email.id, embedding })
-        );
+        await writeEmbeddingToCache(emailToText(email), embedding);
 
         results.push({ id: email.id, embedding });
       }
