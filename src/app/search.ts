@@ -8,6 +8,7 @@ import {
   getCachedEmbedding,
   writeEmbeddingToCache,
 } from "./embeddings";
+import { RecursiveCharacterTextSplitter } from "@langchain/textsplitters";
 
 export interface Email {
   id: string;
@@ -31,6 +32,44 @@ interface SearchFunction<TQuery, TScores extends Record<string, number>> {
     emails: Email[]
   ): Promise<WithEmailAndScores<TScores>[]>;
 }
+
+export type EmailChunk = {
+  id: string;
+  subject: string;
+  chunk: string;
+  index: number;
+  totalChunks: number;
+  from: string;
+  to: string | string[];
+  timestamp: string;
+};
+
+const textSplitter = new RecursiveCharacterTextSplitter({
+  chunkSize: 1000,
+  chunkOverlap: 100,
+  separators: ["\n\n", "\n", " ", ""],
+});
+
+export const chunkEmails = async (emails: Email[]) => {
+  const emailsWithChunks: EmailChunk[] = [];
+  for (const email of emails) {
+    const chunks = await textSplitter.splitText(email.body);
+
+    chunks.forEach((chunk, chunkIndex) => {
+      emailsWithChunks.push({
+        id: email.id,
+        index: chunkIndex,
+        subject: email.subject,
+        chunk,
+        from: email.from,
+        to: email.to,
+        timestamp: email.timestamp,
+        totalChunks: chunks.length,
+      });
+    });
+  }
+  return emailsWithChunks;
+};
 
 type Bm25Score = {
   bm25: number;
