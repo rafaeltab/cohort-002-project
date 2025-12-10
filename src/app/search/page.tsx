@@ -9,6 +9,7 @@ import { SearchPagination } from "./search-pagination";
 import {
   loadEmails,
   loadOrGenerateEmbeddings,
+  searchEmailsWithEmbeddings,
   searchWithBM25,
 } from "../search";
 
@@ -22,12 +23,16 @@ export default async function SearchPage(props: {
 
   const allEmails = await loadEmails();
 
-  const embeddings = await loadOrGenerateEmbeddings(allEmails);
+  // const embeddings = await loadOrGenerateEmbeddings(allEmails);
+  //
+  // console.log("Email embeddings loaded:", embeddings.length);
 
-  console.log("Email embeddings loaded:", embeddings.length);
-
-  const emailsWithScores = await searchWithBM25(
-    query.toLowerCase().split(" "),
+  // const emailsWithScores = await searchWithBM25(
+  //   query.toLowerCase().split(" "),
+  //   allEmails
+  // );
+  const emailsWithScores = await searchEmailsWithEmbeddings(
+    query.toLowerCase(),
     allEmails
   );
 

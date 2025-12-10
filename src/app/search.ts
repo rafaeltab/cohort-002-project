@@ -1,7 +1,7 @@
 import BM25 from "okapibm25";
 import fs from "fs/promises";
 import path from "path";
-import { embedMany } from "ai";
+import { embedMany, embed, cosineSimilarity } from "ai";
 import { google } from "@ai-sdk/google";
 
 export interface Email {
@@ -18,6 +18,36 @@ export interface Email {
   labels?: string[];
   arcId?: string;
   phaseId?: number;
+}
+
+export async function searchEmailsWithEmbeddings(
+  query: string,
+  emails: Email[]
+) {
+  if (query.trim().length == 0) {
+    return emails.map((x) => ({ email: x, score: 0 }));
+    throw Error(
+      "Unexpected empty or whitespace only query while searching emails."
+    );
+  }
+
+  const embeddings = await loadOrGenerateEmbeddings(emails);
+  const { embedding } = await embed({
+    model: google.textEmbeddingModel("text-embedding-004"),
+    value: query,
+  });
+
+  const scored = embeddings.map((x) => ({
+    score: cosineSimilarity(x.embedding, embedding),
+    email: emails.find((y) => x.id == y.id)!,
+  }));
+  scored.sort((a, b) => b.score - a.score);
+
+  if (scored[0].score < scored[1].score) {
+    throw Error("Sorting logic is flawwed");
+  }
+
+  return scored;
 }
 
 export async function searchWithBM25(keywords: string[], emails: Email[]) {
