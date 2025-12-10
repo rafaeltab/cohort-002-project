@@ -20,11 +20,11 @@ export interface Email {
   phaseId?: number;
 }
 
-interface SearchFunction<TScores> {
+interface SearchFunction<TQuery, TScores extends Record<string, number>> {
   searchEmails(
-    query: string,
+    query: TQuery,
     emails: Email[]
-  ): Promise<{ scores: TScores; email: Email }[]>;
+  ): Promise<WithEmailAndScores<TScores>[]>;
 }
 
 type Bm25Score = {
@@ -39,18 +39,19 @@ type FusionScore = {
   fusion: number;
 };
 
-type InferScoresType<T extends SearchFunction<unknown>> =
-  T extends SearchFunction<infer TScores> ? TScores : never;
+type InferScoresType<T extends AnySearchFunction> =
+  T extends SearchFunction<any, infer TScores> ? TScores : never;
 
 export async function searchUsingFunction<
-  TFunction extends SearchFunction<TScores>,
+  TFunction extends SearchFunction<TQuery, TScores>,
+  TQuery,
   TScores extends Record<string, number> = InferScoresType<TFunction>,
 >(props: {
   func: TFunction;
   scorer: keyof TScores;
-  query: string;
+  query: TQuery;
   emails: Email[];
-}): Promise<{ email: Email; scores: TScores; score: number }[]> {
+}): Promise<(WithEmailAndScores<TScores> & { score: number })[]> {
   const scores = await props.func.searchEmails(props.query, props.emails);
   const res = scores.map((x) => ({ ...x, score: x.scores[props.scorer] }));
 
@@ -59,7 +60,97 @@ export async function searchUsingFunction<
   return res;
 }
 
+type AnySearchFunction = SearchFunction<any, Record<string, number>>;
+type MultipleFunctions = {
+  [index: string]: SearchFunction<any, Record<string, number>>;
+};
+type InferMultipleQuery<TFunctions extends MultipleFunctions> = {
+  [index in keyof TFunctions]: InferQuery<TFunctions[index]>;
+};
+type InferMultipleScores<TFunctions extends MultipleFunctions> =
+  UnionToIntersection<InferScores<TFunctions[keyof TFunctions]>> &
+    Record<string, number>;
+
+type InferQuery<TFunction extends AnySearchFunction> =
+  TFunction extends SearchFunction<infer Query, any> ? Query : never;
+type InferScores<TFunction extends AnySearchFunction> =
+  TFunction extends SearchFunction<
+    any,
+    infer Scores extends Record<string, number>
+  >
+    ? Scores
+    : never;
+
+type UnionToIntersection<U> = (U extends any ? (x: U) => void : never) extends (
+  x: infer I
+) => void
+  ? I
+  : never;
+
+export class MultiQuerySearchFunction<
+  TFunctions extends MultipleFunctions,
+> implements SearchFunction<
+  InferMultipleQuery<TFunctions>,
+  InferMultipleScores<TFunctions>
+> {
+  private functions: TFunctions;
+  constructor(functions: TFunctions) {
+    this.functions = functions;
+  }
+  async searchEmails(
+    query: InferMultipleQuery<TFunctions>,
+    emails: Email[]
+  ): Promise<
+    WithEmailAndScores<
+      UnionToIntersection<InferScores<TFunctions[keyof TFunctions]>> &
+        FusionScore
+    >[]
+  > {
+    const promises = Object.entries(this.functions).map(async (entry) => {
+      const [functionName, func] = entry as [
+        keyof TFunctions,
+        TFunctions[keyof TFunctions],
+      ];
+      const queryPart = query[functionName];
+      const res = await func.searchEmails(queryPart, emails);
+      return res;
+    });
+    const results = await Promise.all(promises);
+
+    const merged = mergeScoreFunctions(...results);
+
+    const fusionScores = reciprocalRankFusion(merged);
+    const finalScores = mergeScoreFunction(merged, fusionScores);
+
+    return finalScores as any;
+  }
+}
+
+export class QuerySelectorSearchFunction<
+  TFunction extends SearchFunction<TQuery, TScores>,
+  TTotalQuery extends { [index in TName]: TQuery },
+  TName extends string,
+  TQuery,
+  TScores extends Record<string, number>,
+> implements SearchFunction<TTotalQuery, TScores> {
+  private queryPartName: TName;
+  private next: TFunction;
+
+  constructor(queryPartName: TName, next: TFunction) {
+    this.queryPartName = queryPartName;
+    this.next = next;
+  }
+
+  searchEmails(
+    query: TTotalQuery,
+    emails: Email[]
+  ): Promise<{ scores: TScores; email: Email }[]> {
+    return this.next.searchEmails(query[this.queryPartName], emails);
+  }
+}
+
 export class CombinedSearchFunction implements SearchFunction<
+  string,
   Bm25Score & EmbeddingScore & FusionScore
 > {
   private bm25Function = new Bm25SearchFunction();
@@ -68,18 +159,62 @@ export class CombinedSearchFunction implements SearchFunction<
   async searchEmails(
     query: string,
     emails: Email[]
-  ): Promise<
-    { scores: Bm25Score & EmbeddingScore & FusionScore; email: Email }[]
-  > {
+  ): Promise<WithEmailAndScores<Bm25Score & EmbeddingScore & FusionScore>[]> {
     const [bm25, embed] = await Promise.all([
-      this.bm25Function.searchEmails(query, emails),
+      this.bm25Function.searchEmails(query.split(" "), emails),
       this.embeddingFunction.searchEmails(query, emails),
     ]);
 
-    const scores = mergeScoreFunction(bm25, embed);
+    const scores = mergeScoreFunctions(bm25, embed);
     const fusionResult = reciprocalRankFusion(scores);
-    return mergeScoreFunction(scores, fusionResult);
+    return mergeScoreFunctions(scores, fusionResult);
   }
+}
+
+type WithEmailAndScores<S> = { email: Email; scores: S };
+
+// Merge an array of score-lists into one, by email, with precise typing.
+// - Accepts any number of lists: [{email, scores: A}][], [{email, scores: B}][], ...
+// - Returns [{email, scores: A & B & ...}] with intersection of all score types.
+// - Assumes each list has the same emails in the same order.
+function mergeScoreFunctions<
+  Lists extends ReadonlyArray<
+    ReadonlyArray<WithEmailAndScores<Record<string, number>>>
+  >,
+>(
+  ...lists: Lists
+): Array<
+  Lists extends []
+    ? never
+    : Lists[number] extends ReadonlyArray<WithEmailAndScores<infer S>>
+      ? WithEmailAndScores<UnionToIntersection<S>>
+      : never
+> {
+  if (lists.length === 0) return [];
+
+  const length = lists[0].length;
+  // Basic sanity check (optional): ensure all lists have the same length
+  // and corresponding emails match.
+  // You can remove this block if you don't want runtime checks.
+  for (let i = 1; i < lists.length; i++) {
+    if (lists[i].length !== length) {
+      throw new Error("All score lists must have the same length.");
+    }
+  }
+
+  const result: any[] = new Array(length);
+  for (let i = 0; i < length; i++) {
+    const email = lists[0][i].email;
+    const merged: Record<string, number> = {};
+    for (let l = 0; l < lists.length; l++) {
+      const item = lists[l][i];
+      // Optional check: ensure emails align
+      // if (item.email !== email) throw new Error("Mismatched emails across lists.");
+      Object.assign(merged, item.scores);
+    }
+    result[i] = { email, scores: merged };
+  }
+  return result as any;
 }
 
 function mergeScoreFunction<TAScores, TBScores>(
@@ -113,8 +248,8 @@ function* zip<TA, TB, TC>(
 const RRF_K = 60;
 
 function reciprocalRankFusion<TScores extends Record<string, number>>(
-  emailScores: { email: Email; scores: TScores }[]
-): { email: Email; scores: FusionScore }[] {
+  emailScores: WithEmailAndScores<TScores>[]
+): WithEmailAndScores<FusionScore>[] {
   const rankers = Object.keys(emailScores[0].scores);
   const rankings = rankers.map((ranker) =>
     emailScores
@@ -138,13 +273,12 @@ function reciprocalRankFusion<TScores extends Record<string, number>>(
   }));
 }
 
-export class Bm25SearchFunction implements SearchFunction<Bm25Score> {
+export class Bm25SearchFunction implements SearchFunction<string[], Bm25Score> {
   async searchEmails(
-    query: string,
+    query: string[],
     emails: Email[]
-  ): Promise<{ scores: Bm25Score; email: Email }[]> {
-    const keywords = query.split(" ");
-    if (keywords.length == 0) {
+  ): Promise<WithEmailAndScores<Bm25Score>[]> {
+    if (query.length == 0) {
       return emails.map((x) => ({ email: x, scores: { bm25: 0 } }));
     }
 
@@ -152,7 +286,7 @@ export class Bm25SearchFunction implements SearchFunction<Bm25Score> {
       `${email.subject} ${email.body}`.toLowerCase()
     );
 
-    const scores: number[] = (BM25 as any)(corpus, keywords);
+    const scores: number[] = (BM25 as any)(corpus, query);
 
     const scored = emails.map((x, i) => ({
       scores: {
@@ -165,7 +299,10 @@ export class Bm25SearchFunction implements SearchFunction<Bm25Score> {
   }
 }
 
-export class EmbeddingSearchFunction implements SearchFunction<EmbeddingScore> {
+export class EmbeddingSearchFunction implements SearchFunction<
+  string,
+  EmbeddingScore
+> {
   async searchEmails(
     query: string,
     emails: Email[]
