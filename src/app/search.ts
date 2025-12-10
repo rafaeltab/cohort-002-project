@@ -43,22 +43,35 @@ type InferScoresType<T extends AnySearchFunction> =
   T extends SearchFunction<any, infer TScores> ? TScores : never;
 
 export async function searchUsingFunction<
-  TFunction extends SearchFunction<TQuery, TScores>,
-  TQuery,
+  TFunction extends SearchFunction<any, TScores>,
   TScores extends Record<string, number> = InferScoresType<TFunction>,
 >(props: {
   func: TFunction;
   scorer: keyof TScores;
-  query: TQuery;
+  query: Prettify<InferQuery<TFunction>>;
   emails: Email[];
+  includeZeros?: boolean;
+  limit?: number;
 }): Promise<(WithEmailAndScores<TScores> & { score: number })[]> {
   const scores = await props.func.searchEmails(props.query, props.emails);
-  const res = scores.map((x) => ({ ...x, score: x.scores[props.scorer] }));
+  let res = scores.map((x) => ({ ...x, score: x.scores[props.scorer] }));
+
+  if (props.includeZeros != true) {
+    res = res.filter((x) => x.score > 0);
+  }
 
   res.sort((a, b) => b.score - a.score);
 
+  if (props.limit != undefined) {
+    res = res.slice(0, props.limit);
+  }
+
   return res;
 }
+
+type Prettify<T> = {
+  [K in keyof T]: T[K];
+} & {};
 
 type AnySearchFunction = SearchFunction<any, Record<string, number>>;
 type MultipleFunctions = {
@@ -160,14 +173,17 @@ export class CombinedSearchFunction implements SearchFunction<
     query: string,
     emails: Email[]
   ): Promise<WithEmailAndScores<Bm25Score & EmbeddingScore & FusionScore>[]> {
-    const [bm25, embed] = await Promise.all([
-      this.bm25Function.searchEmails(query.split(" "), emails),
-      this.embeddingFunction.searchEmails(query, emails),
-    ]);
-
-    const scores = mergeScoreFunctions(bm25, embed);
-    const fusionResult = reciprocalRankFusion(scores);
-    return mergeScoreFunctions(scores, fusionResult);
+    const complete = new MultiQuerySearchFunction({
+      bm25: this.bm25Function,
+      embedding: this.embeddingFunction,
+    });
+    return await complete.searchEmails(
+      {
+        bm25: query.split(" "),
+        embedding: query,
+      },
+      emails
+    );
   }
 }
 
@@ -260,10 +276,15 @@ function reciprocalRankFusion<TScores extends Record<string, number>>(
   const rrfScores = new Map<string, number>();
 
   rankings.forEach((ranking) => {
+    const allZero = ranking.find((x) => x.score != 0) == undefined;
+
     ranking.forEach((doc, rank) => {
       const currentScore = rrfScores.get(doc.email.id) || 0;
       const contribution = 1 / (RRF_K + rank);
-      rrfScores.set(doc.email.id, currentScore + contribution);
+      rrfScores.set(
+        doc.email.id,
+        allZero ? currentScore : currentScore + contribution
+      );
     });
   });
 
