@@ -7,10 +7,9 @@ import { PerPageSelector } from "./per-page-selector";
 import { SearchInput } from "./search-input";
 import { SearchPagination } from "./search-pagination";
 import {
+  CombinedSearchFunction,
   loadEmails,
-  loadOrGenerateEmbeddings,
-  searchEmailsWithEmbeddings,
-  searchWithBM25,
+  searchUsingFunction,
 } from "../search";
 
 export default async function SearchPage(props: {
@@ -22,37 +21,17 @@ export default async function SearchPage(props: {
   const perPage = Number(searchParams.perPage) || 10;
 
   const allEmails = await loadEmails();
-
-  // const embeddings = await loadOrGenerateEmbeddings(allEmails);
-  //
-  // console.log("Email embeddings loaded:", embeddings.length);
-
-  // const emailsWithScores = await searchWithBM25(
-  //   query.toLowerCase().split(" "),
-  //   allEmails
-  // );
-  const emailsWithScores = await searchEmailsWithEmbeddings(
-    query.toLowerCase(),
-    allEmails
-  );
-
-  // Transform emails to match the expected format
-  const transformedEmails = emailsWithScores
-    .map(({ email, score }) => ({
-      id: email.id,
-      from: email.from,
-      subject: email.subject,
-      preview: email.body.substring(0, 100) + "...",
-      content: email.body,
-      date: email.timestamp,
-      score: score,
-    }))
-    .sort((a, b) => b.score - a.score);
+  const emailsWithScores = await searchUsingFunction({
+    func: new CombinedSearchFunction(),
+    scorer: "fusion",
+    query: query.toLowerCase(),
+    emails: allEmails,
+  });
 
   // Filter emails based on search query
   const filteredEmails = query
-    ? transformedEmails.filter((email) => email.score > 0)
-    : transformedEmails;
+    ? emailsWithScores.filter((email) => email.score > 0)
+    : emailsWithScores;
 
   const totalPages = Math.ceil(filteredEmails.length / perPage);
   const startIndex = (page - 1) * perPage;
@@ -97,7 +76,7 @@ export default async function SearchPage(props: {
                   )}
                 </p>
               </div>
-              <EmailList emails={paginatedEmails} />
+              <EmailList scoredEmails={paginatedEmails} />
               {totalPages > 1 && (
                 <div className="mt-6">
                   <SearchPagination

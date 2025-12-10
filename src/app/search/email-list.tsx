@@ -2,20 +2,26 @@
 
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { MailIcon, ChevronDownIcon, ChevronUpIcon } from "lucide-react";
+import {
+  MailIcon,
+  ChevronDownIcon,
+  ChevronUpIcon,
+  Type,
+  Brain,
+  Zap,
+} from "lucide-react";
 import { useState } from "react";
+import { Email } from "../search";
 
-type Email = {
-  id: string;
-  from: string;
-  subject: string;
-  preview: string;
-  content: string;
-  date: string;
-};
-
-function EmailCard({ email }: { email: Email }) {
+function EmailCard({ scoredEmail }: { scoredEmail: ScoredEmail }) {
+  const { email, scores } = scoredEmail;
   const [expanded, setExpanded] = useState(false);
+
+  const bm25Score = scores["bm25"]?.toFixed(1) || "N/A";
+  const embeddingScore =
+    "embedding" in scores ? (scores["embedding"] * 100).toFixed(1) : "N/A";
+  const rrfScore =
+    "fusion" in scores ? (scores["fusion"] * 100).toFixed(1) : "N/A";
 
   const formatDate = (dateString: string) => {
     const date = new Date(dateString);
@@ -42,20 +48,53 @@ function EmailCard({ email }: { email: Email }) {
               </h3>
               <p className="text-xs text-muted-foreground">{email.from}</p>
             </div>
+
             <span className="text-xs text-muted-foreground whitespace-nowrap">
-              {formatDate(email.date)}
+              {formatDate(email.timestamp)}
             </span>
+
+            <div className="flex items-center gap-2">
+              <span
+                className={
+                  "text-xs font-mono flex items-center transition-all text-foreground font-medium"
+                }
+                title="BM25 Score"
+              >
+                <Type className={"text-blue-400"} />
+                {bm25Score}
+              </span>
+              <span
+                className={
+                  "text-xs font-mono flex items-center transition-all text-foreground font-medium"
+                }
+                title="Semantic Score"
+              >
+                <Brain className={"text-pink-400"} />
+                {embeddingScore}%
+              </span>
+              <span
+                className={
+                  "text-xs font-mono flex items-center transition-all text-foreground font-medium"
+                }
+                title="Final RRF Score"
+              >
+                <Zap
+                  className={"w-3 h-3 mr-1.5 transition-all text-yellow-400"}
+                />
+                {rrfScore}
+              </span>
+            </div>
           </div>
 
           <p className="text-sm text-foreground/80 mt-2 line-clamp-2">
-            {email.preview}
+            {email.body.substring(0, 100) + "..."}
           </p>
 
           {expanded && (
             <div className="mt-3 pt-3 border-t">
               <div className="prose prose-sm max-w-none dark:prose-invert">
                 <pre className="whitespace-pre-wrap font-sans text-sm leading-relaxed">
-                  {email.content}
+                  {email.body}
                 </pre>
               </div>
             </div>
@@ -85,8 +124,14 @@ function EmailCard({ email }: { email: Email }) {
   );
 }
 
-export function EmailList({ emails }: { emails: Email[] }) {
-  if (emails.length === 0) {
+type ScoredEmail = {
+  email: Email;
+  scores: Record<string, number>;
+  score: number;
+};
+
+export function EmailList({ scoredEmails }: { scoredEmails: ScoredEmail[] }) {
+  if (scoredEmails.length === 0) {
     return (
       <div className="text-center py-12">
         <MailIcon className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
@@ -98,8 +143,8 @@ export function EmailList({ emails }: { emails: Email[] }) {
 
   return (
     <div className="space-y-3">
-      {emails.map((email) => (
-        <EmailCard key={email.id} email={email} />
+      {scoredEmails.map((scoredEmail) => (
+        <EmailCard key={scoredEmail.email.id} scoredEmail={scoredEmail} />
       ))}
     </div>
   );
