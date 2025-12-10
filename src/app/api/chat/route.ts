@@ -95,7 +95,17 @@ export async function POST(req: Request) {
       const result = streamText({
         model: google("gemini-2.5-flash-lite"),
         messages: convertToModelMessages(messages),
-        system: `Use your search tool to answer questions.`,
+        system: `<goal>
+        Use the search tool to answer the user's question in a concise, but complete manner.
+        </goal>
+        <rules>
+        - ALWAYS use the tool
+        - ALWAYS answer the user's question using text, the user can not see the emails you find
+        - Use the tool multiple times! 
+        - ALWAYS Use the search tool, wait for the response, then use it again to gather more information.
+        - NEVER use your training data, always search using the tool you have been provided with.
+        - ALWAYS State the subject of the most important sources at the end of your response
+        </rules>`,
         tools: {
           search: searchTool,
         },
@@ -110,11 +120,9 @@ export async function POST(req: Request) {
       );
 
       await generateTitlePromise;
-      await result.consumeStream();
     },
     generateId: () => crypto.randomUUID(),
     onFinish: async ({ responseMessage }) => {
-      console.log("Finish", responseMessage);
       await appendToChatMessages(chatId, [responseMessage]);
     },
   });

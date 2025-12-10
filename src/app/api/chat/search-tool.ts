@@ -10,7 +10,7 @@ import { z } from "zod";
 
 export const searchTool = tool({
   description:
-    "Search emails using both keyword and semantic search. Returns most relevant emails ranked by reciprocal rank fusion.",
+    "Search emails using at least 5 keywords and a semantic search query. Returns most relevant emails ranked by reciprocal rank fusion. Use synonyms in the keywords, as this does exact matching only!",
   inputSchema: z.object({
     keywords: z
       .array(z.string())
@@ -46,7 +46,7 @@ export const searchTool = tool({
       limit: 10,
     });
 
-    console.log("discovered emails", values);
+    console.log("discovered email count: ", values.length);
 
     return {
       emails: values.map((r) => ({
