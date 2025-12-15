@@ -12,7 +12,6 @@ import {
   EmbeddingSearchFunction,
   loadEmails,
   MultiQuerySearchFunction,
-  RerankerFunction,
   searchUsingFunction,
 } from "../search";
 
@@ -27,16 +26,9 @@ export default async function SearchPage(props: {
   const allEmails = await loadEmails();
 
   const emailChunks = await chunkEmails(allEmails);
-  const func = new RerankerFunction({
-    next: new MultiQuerySearchFunction({
-      bm25: new Bm25SearchFunction(),
-      embedding: new EmbeddingSearchFunction(),
-    }),
-    chunkCountToReturn: 10,
-    orderBy: "fusion",
-    queryToString: (q) => `Query: ${q.embedding}
-Keywords: ${q.bm25}`,
-    chunkCountToRerank: 30,
+  const func = new MultiQuerySearchFunction({
+    bm25: new Bm25SearchFunction(),
+    embedding: new EmbeddingSearchFunction(),
   });
 
   const emailsWithScores = await searchUsingFunction({

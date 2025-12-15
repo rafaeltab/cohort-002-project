@@ -100,13 +100,14 @@ export async function POST(req: Request) {
         <rules>
         - ALWAYS use the tool
         - ALWAYS answer the user's question using text, the user can not see the emails you find
+        - NEVER forget to answer the user's question directly with text
         - Use the tool multiple times! 
         - ALWAYS Use the search tool, wait for the response, then use it again to gather more information.
         - NEVER use your training data, always search using the tool you have been provided with.
         - ALWAYS State the subject of the most important sources at the end of your response
         </rules>`,
         tools: {
-          search: searchTool,
+          search: searchTool(messages),
         },
         stopWhen: [stepCountIs(10)],
       });

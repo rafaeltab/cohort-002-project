@@ -1,7 +1,13 @@
 import BM25 from "okapibm25";
 import fs from "fs/promises";
 import path from "path";
-import { embedMany, embed, cosineSimilarity, generateObject } from "ai";
+import {
+  embedMany,
+  embed,
+  cosineSimilarity,
+  generateObject,
+  UIMessage,
+} from "ai";
 import { google } from "@ai-sdk/google";
 import {
   ensureEmbeddingsCacheDirectory,
@@ -38,6 +44,7 @@ export class RerankerFunction<
   TQuery,
   TScores extends Record<string, number>,
 > implements SearchFunction<TQuery, TScores> {
+  private messages: UIMessage[];
   private next: SearchFunction<TQuery, TScores>;
 
   private queryToString: (query: TQuery) => string;
@@ -46,12 +53,14 @@ export class RerankerFunction<
   private orderBy: keyof TScores;
 
   constructor(options: {
+    messages: UIMessage[];
     next: SearchFunction<TQuery, TScores>;
     queryToString: (query: TQuery) => string;
     chunkCountToRerank: number;
     chunkCountToReturn: number;
     orderBy: keyof TScores;
   }) {
+    this.messages = options.messages;
     this.next = options.next;
     this.queryToString = options.queryToString;
     this.chunkCountToRerank = options.chunkCountToRerank;
@@ -68,6 +77,9 @@ export class RerankerFunction<
     if (results.length < 1) return results;
 
     results.sort((a, b) => b.scores[this.orderBy] - a.scores[this.orderBy]);
+    const usefulMessages = this.messages.filter(
+      (x) => x.role == "user" || x.role == "assistant"
+    );
 
     const rerankerResults = await generateObject({
       model: google("gemini-2.5-flash-lite"),
@@ -80,6 +92,17 @@ You must return a list of indexes for the chunks, in order of most to least impo
 The index that is returned first is the most important.`,
       prompt: `# The query
 ${this.queryToString(query)}
+
+# Message history
+
+${usefulMessages
+  .map((x) => ({ ...x, parts: x.parts.filter((x) => x.type == "text") }))
+  .filter((x) => x.parts.length != 0)
+  .map(
+    (x) => `## ${x.role}
+${x.parts.join("\n")}`
+  )
+  .join("\n\n")}
 
 # The chunks
 
@@ -96,14 +119,15 @@ timestamp: ${rankedEmailChunk.email.timestamp}`
   .join("\n\n")}`,
     });
 
-    const idImportance = rerankerResults.object.importantIds;
+    const idImportance = rerankerResults.object.importantIds.slice(
+      0,
+      this.chunkCountToReturn
+    );
     console.log(
       `Reranked ${results.length} results down to ${idImportance.length} results.`
     );
 
-    return idImportance
-      .map((x) => results[parseInt(x)])
-      .slice(0, this.chunkCountToReturn);
+    return idImportance.map((x) => results[parseInt(x)]);
   }
 }
 
