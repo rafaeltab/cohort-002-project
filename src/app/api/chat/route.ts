@@ -1,7 +1,6 @@
 import {
   appendToChatMessages,
   createChat,
-  DB,
   getChat,
   updateChatTitle,
 } from "@/lib/persistence-layer";

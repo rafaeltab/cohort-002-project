@@ -11,7 +11,7 @@ import {
   Zap,
 } from "lucide-react";
 import { useState } from "react";
-import { Email } from "../search";
+import { EmailChunk } from "../search";
 
 function EmailCard({ scoredEmail }: { scoredEmail: ScoredEmail }) {
   const { email, scores } = scoredEmail;
@@ -87,14 +87,14 @@ function EmailCard({ scoredEmail }: { scoredEmail: ScoredEmail }) {
           </div>
 
           <p className="text-sm text-foreground/80 mt-2 line-clamp-2">
-            {email.body.substring(0, 100) + "..."}
+            {email.chunk.substring(0, 100) + "..."}
           </p>
 
           {expanded && (
             <div className="mt-3 pt-3 border-t">
               <div className="prose prose-sm max-w-none dark:prose-invert">
                 <pre className="whitespace-pre-wrap font-sans text-sm leading-relaxed">
-                  {email.body}
+                  {email.chunk}
                 </pre>
               </div>
             </div>
@@ -125,7 +125,7 @@ function EmailCard({ scoredEmail }: { scoredEmail: ScoredEmail }) {
 }
 
 type ScoredEmail = {
-  email: Email;
+  email: EmailChunk;
   scores: Record<string, number>;
   score: number;
 };
@@ -144,7 +144,7 @@ export function EmailList({ scoredEmails }: { scoredEmails: ScoredEmail[] }) {
   return (
     <div className="space-y-3">
       {scoredEmails.map((scoredEmail) => (
-        <EmailCard key={scoredEmail.email.id} scoredEmail={scoredEmail} />
+        <EmailCard key={`${scoredEmail.email.id}-${scoredEmail.email.index}`} scoredEmail={scoredEmail} />
       ))}
     </div>
   );

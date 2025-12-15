@@ -4,6 +4,7 @@ import {
   EmbeddingSearchFunction,
   Bm25SearchFunction,
   searchUsingFunction,
+  chunkEmails,
 } from "@/app/search";
 import { tool } from "ai";
 import { z } from "zod";
@@ -28,6 +29,7 @@ export const searchTool = tool({
     console.log("Search query:", searchQuery);
 
     const emails = await loadEmails();
+    const emailChunks = await chunkEmails(emails);
 
     const func = new MultiQuerySearchFunction({
       bm25: new Bm25SearchFunction(),
@@ -37,7 +39,7 @@ export const searchTool = tool({
     const values = await searchUsingFunction({
       func,
       scorer: "fusion",
-      emails,
+      emailChunks,
       query: {
         bm25: keywords ?? [],
         embedding: searchQuery ?? "",
@@ -46,7 +48,7 @@ export const searchTool = tool({
       limit: 10,
     });
 
-    console.log("discovered email count: ", values.length);
+    console.log("discovered email chunk count: ", values.length);
 
     return {
       emails: values.map((r) => ({
@@ -54,7 +56,7 @@ export const searchTool = tool({
         from: r.email.from,
         to: r.email.to,
         subject: r.email.subject,
-        body: r.email.body,
+        body: r.email.chunk,
         timestamp: r.email.timestamp,
         scores: r.scores,
         score: r.score,

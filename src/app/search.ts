@@ -29,7 +29,7 @@ export interface Email {
 interface SearchFunction<TQuery, TScores extends Record<string, number>> {
   searchEmails(
     query: TQuery,
-    emails: Email[]
+    emails: EmailChunk[]
   ): Promise<WithEmailAndScores<TScores>[]>;
 }
 
@@ -93,11 +93,11 @@ export async function searchUsingFunction<
   func: TFunction;
   scorer: keyof TScores;
   query: Prettify<InferQuery<TFunction>>;
-  emails: Email[];
+  emailChunks: EmailChunk[];
   includeZeros?: boolean;
   limit?: number;
 }): Promise<(WithEmailAndScores<TScores> & { score: number })[]> {
-  const scores = await props.func.searchEmails(props.query, props.emails);
+  const scores = await props.func.searchEmails(props.query, props.emailChunks);
   let res = scores.map((x) => ({ ...x, score: x.scores[props.scorer] }));
 
   if (props.includeZeros != true) {
@@ -156,7 +156,7 @@ export class MultiQuerySearchFunction<
   }
   async searchEmails(
     query: InferMultipleQuery<TFunctions>,
-    emails: Email[]
+    emails: EmailChunk[]
   ): Promise<
     WithEmailAndScores<
       UnionToIntersection<InferScores<TFunctions[keyof TFunctions]>> &
@@ -177,7 +177,7 @@ export class MultiQuerySearchFunction<
     const merged = mergeScoreFunctions(...results);
 
     const fusionScores = reciprocalRankFusion(merged);
-    const finalScores = mergeScoreFunction(merged, fusionScores);
+    const finalScores = mergeScoreFunctions(merged, fusionScores);
 
     return finalScores as any;
   }
@@ -200,8 +200,8 @@ export class QuerySelectorSearchFunction<
 
   searchEmails(
     query: TTotalQuery,
-    emails: Email[]
-  ): Promise<{ scores: TScores; email: Email }[]> {
+    emails: EmailChunk[]
+  ): Promise<{ scores: TScores; email: EmailChunk }[]> {
     return this.next.searchEmails(query[this.queryPartName], emails);
   }
 }
@@ -215,7 +215,7 @@ export class CombinedSearchFunction implements SearchFunction<
 
   async searchEmails(
     query: string,
-    emails: Email[]
+    emails: EmailChunk[]
   ): Promise<WithEmailAndScores<Bm25Score & EmbeddingScore & FusionScore>[]> {
     const complete = new MultiQuerySearchFunction({
       bm25: this.bm25Function,
@@ -231,7 +231,7 @@ export class CombinedSearchFunction implements SearchFunction<
   }
 }
 
-type WithEmailAndScores<S> = { email: Email; scores: S };
+type WithEmailAndScores<S> = { email: EmailChunk; scores: S };
 
 // Merge an array of score-lists into one, by email, with precise typing.
 // - Accepts any number of lists: [{email, scores: A}][], [{email, scores: B}][], ...
@@ -277,34 +277,6 @@ function mergeScoreFunctions<
   return result as any;
 }
 
-function mergeScoreFunction<TAScores, TBScores>(
-  scoresA: { email: Email; scores: TAScores }[],
-  scoresB: { email: Email; scores: TBScores }[]
-): { email: Email; scores: TAScores & TBScores }[] {
-  return Array.from(
-    zip(scoresA, scoresB, (a, b) => ({
-      email: a.email,
-      scores: {
-        ...a.scores,
-        ...b.scores,
-      },
-    }))
-  );
-}
-
-function* zip<TA, TB, TC>(
-  a: TA[],
-  b: TB[],
-  combine: (aItem: TA, bItem: TB) => TC
-): Generator<TC> {
-  for (let i = 0; i < a.length; i++) {
-    const aItem = a[i];
-    const bItem = b[i];
-
-    yield combine(aItem, bItem);
-  }
-}
-
 const RRF_K = 60;
 
 function reciprocalRankFusion<TScores extends Record<string, number>>(
@@ -341,13 +313,13 @@ function reciprocalRankFusion<TScores extends Record<string, number>>(
 export class Bm25SearchFunction implements SearchFunction<string[], Bm25Score> {
   async searchEmails(
     query: string[],
-    emails: Email[]
+    emails: EmailChunk[]
   ): Promise<WithEmailAndScores<Bm25Score>[]> {
     if (query.length == 0) {
       return emails.map((x) => ({ email: x, scores: { bm25: 0 } }));
     }
 
-    const corpus = emails.map((email) => emailToText(email).toLowerCase());
+    const corpus = emails.map((email) => emailChunkToText(email).toLowerCase());
 
     const scores: number[] = (BM25 as any)(corpus, query);
 
@@ -368,8 +340,8 @@ export class EmbeddingSearchFunction implements SearchFunction<
 > {
   async searchEmails(
     query: string,
-    emails: Email[]
-  ): Promise<{ scores: EmbeddingScore; email: Email }[]> {
+    emails: EmailChunk[]
+  ): Promise<{ scores: EmbeddingScore; email: EmailChunk }[]> {
     if (query.trim().length == 0) {
       return emails.map((x) => ({ email: x, scores: { embedding: 0 } }));
     }
@@ -400,18 +372,21 @@ export async function loadEmails(): Promise<Email[]> {
 // Converts the email to a text string for indexing
 export const emailToText = (email: Email) => `${email.subject} ${email.body}`;
 
+export const emailChunkToText = (email: EmailChunk) =>
+  `${email.subject} ${email.chunk}`;
+
 export async function loadOrGenerateEmbeddings(
-  emails: Email[]
+  emails: EmailChunk[]
 ): Promise<{ id: string; embedding: number[] }[]> {
   // Ensure cache directory exists
   await ensureEmbeddingsCacheDirectory();
 
   const results: { id: string; embedding: number[] }[] = [];
-  const uncachedEmails: Email[] = [];
+  const uncachedEmails: EmailChunk[] = [];
 
   // Check cache for each email
   for (const email of emails) {
-    const cachedEmbedding = await getCachedEmbedding(emailToText(email));
+    const cachedEmbedding = await getCachedEmbedding(emailChunkToText(email));
     if (cachedEmbedding) {
       results.push({ id: email.id, embedding: cachedEmbedding });
     } else {
@@ -435,7 +410,7 @@ export async function loadOrGenerateEmbeddings(
 
       const { embeddings } = await embedMany({
         model: google.textEmbeddingModel("text-embedding-004"),
-        values: batch.map((e) => emailToText(e)),
+        values: batch.map((e) => emailChunkToText(e)),
       });
 
       // Write batch to cache
@@ -443,7 +418,7 @@ export async function loadOrGenerateEmbeddings(
         const email = batch[j];
         const embedding = embeddings[j];
 
-        await writeEmbeddingToCache(emailToText(email), embedding);
+        await writeEmbeddingToCache(emailChunkToText(email), embedding);
 
         results.push({ id: email.id, embedding });
       }

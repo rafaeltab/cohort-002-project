@@ -7,8 +7,11 @@ import { PerPageSelector } from "./per-page-selector";
 import { SearchInput } from "./search-input";
 import { SearchPagination } from "./search-pagination";
 import {
-  CombinedSearchFunction,
+  Bm25SearchFunction,
+  chunkEmails,
+  EmbeddingSearchFunction,
   loadEmails,
+  MultiQuerySearchFunction,
   searchUsingFunction,
 } from "../search";
 
@@ -21,11 +24,22 @@ export default async function SearchPage(props: {
   const perPage = Number(searchParams.perPage) || 10;
 
   const allEmails = await loadEmails();
+
+  const emailChunks = await chunkEmails(allEmails);
+  const func = new MultiQuerySearchFunction({
+    bm25: new Bm25SearchFunction(),
+    embedding: new EmbeddingSearchFunction(),
+  });
+
   const emailsWithScores = await searchUsingFunction({
-    func: new CombinedSearchFunction(),
+    func,
     scorer: "fusion",
-    query: query.toLowerCase(),
-    emails: allEmails,
+    emailChunks,
+    query: {
+      bm25: query.split(" ") ?? [],
+      embedding: query ?? "",
+    },
+    includeZeros: false,
   });
 
   // Filter emails based on search query
