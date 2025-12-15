@@ -1,7 +1,7 @@
 import BM25 from "okapibm25";
 import fs from "fs/promises";
 import path from "path";
-import { embedMany, embed, cosineSimilarity } from "ai";
+import { embedMany, embed, cosineSimilarity, generateObject } from "ai";
 import { google } from "@ai-sdk/google";
 import {
   ensureEmbeddingsCacheDirectory,
@@ -9,6 +9,7 @@ import {
   writeEmbeddingToCache,
 } from "./embeddings";
 import { RecursiveCharacterTextSplitter } from "@langchain/textsplitters";
+import z from "zod";
 
 export interface Email {
   id: string;
@@ -31,6 +32,79 @@ interface SearchFunction<TQuery, TScores extends Record<string, number>> {
     query: TQuery,
     emails: EmailChunk[]
   ): Promise<WithEmailAndScores<TScores>[]>;
+}
+
+export class RerankerFunction<
+  TQuery,
+  TScores extends Record<string, number>,
+> implements SearchFunction<TQuery, TScores> {
+  private next: SearchFunction<TQuery, TScores>;
+
+  private queryToString: (query: TQuery) => string;
+  private chunkCountToRerank: number;
+  private chunkCountToReturn: number;
+  private orderBy: keyof TScores;
+
+  constructor(options: {
+    next: SearchFunction<TQuery, TScores>;
+    queryToString: (query: TQuery) => string;
+    chunkCountToRerank: number;
+    chunkCountToReturn: number;
+    orderBy: keyof TScores;
+  }) {
+    this.next = options.next;
+    this.queryToString = options.queryToString;
+    this.chunkCountToRerank = options.chunkCountToRerank;
+    this.chunkCountToReturn = options.chunkCountToReturn;
+    this.orderBy = options.orderBy;
+  }
+
+  async searchEmails(
+    query: TQuery,
+    emails: EmailChunk[]
+  ): Promise<WithEmailAndScores<TScores>[]> {
+    const results = await this.next.searchEmails(query, emails);
+
+    if (results.length < 1) return results;
+
+    results.sort((a, b) => b.scores[this.orderBy] - a.scores[this.orderBy]);
+
+    const rerankerResults = await generateObject({
+      model: google("gemini-2.5-flash-lite"),
+      schema: z.object({
+        importantIds: z.array(z.string()),
+      }),
+      system: `You are a search result reranker. Your job is to analyze which email chunks are the most important for the query.
+
+You must return a list of indexes for the chunks, in order of most to least important.
+The index that is returned first is the most important.`,
+      prompt: `# The query
+${this.queryToString(query)}
+
+# The chunks
+
+${results
+  .slice(0, this.chunkCountToRerank)
+  .map(
+    (rankedEmailChunk, i) => `## Index: ${i}
+Subject: ${rankedEmailChunk.email.subject}
+Content: ${rankedEmailChunk.email.chunk}
+From: ${rankedEmailChunk.email.from}
+To: ${rankedEmailChunk.email.to}
+timestamp: ${rankedEmailChunk.email.timestamp}`
+  )
+  .join("\n\n")}`,
+    });
+
+    const idImportance = rerankerResults.object.importantIds;
+    console.log(
+      `Reranked ${results.length} results down to ${idImportance.length} results.`
+    );
+
+    return idImportance
+      .map((x) => results[parseInt(x)])
+      .slice(0, this.chunkCountToReturn);
+  }
 }
 
 export type EmailChunk = {
