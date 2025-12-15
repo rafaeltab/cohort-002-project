@@ -219,7 +219,7 @@ export const Chat = (props: { chat: DB.Chat | null }) => {
                             {/* Email results */}
                             {part.state === "output-available" &&
                               part.output && (
-                                <EmailResultsGrid emails={part.output.emails} />
+                                <EmailResultsGrid emails={part.output} />
                               )}
 
                             {/* Error state */}

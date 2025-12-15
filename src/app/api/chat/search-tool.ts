@@ -81,6 +81,7 @@ Keywords: ${q.bm25}`,
       });
 
       console.log("Top emails:", topEmails.length);
+      return topEmails;
     },
   });
 }
